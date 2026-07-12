@@ -5,7 +5,10 @@
 	<title>Player</title>
 	<style>
 		html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
-		#player { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+		#player, #html5 {
+			position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+		}
+		#html5 { object-fit: contain; background: #000; }
 		#unmute {
 			position: absolute; top: 0; left: 0; width: 100%; height: 100%;
 			z-index: 10; background: transparent; cursor: pointer;
@@ -13,72 +16,132 @@
 	</style>
 </head>
 <body>
-	<div id="player"></div>
 	<!-- Invisible overlay. The first click anywhere lands here (a "user
 	     gesture"), which lets us unmute. The game sends that click
 	     automatically once we signal #ready via the URL hash. -->
 	<div id="unmute"></div>
 	<script>
-		// Reads ?v=VIDEOID&t=SECONDS from the URL. Autoplays MUTED (always
-		// allowed by autoplay policy), then unmutes on first click.
-		// Protocol with the game:
-		//   #ready -> page is playing muted, please send a click
+		// Two modes:
+		//   ?v=VIDEOID&t=SECONDS   -> YouTube via the official IFrame API
+		//   ?src=ENCODED_URL&t=SEC -> direct video file (.mp4/.webm/.m3u8) via HTML5
+		// Both autoplay MUTED (always allowed by autoplay policy), then unmute
+		// on first click. Protocol with the game:
+		//   #ready -> playing muted, please send a click
 		//   #sound -> unmuted, all good
 		const params = new URLSearchParams( location.search );
 		const videoId = params.get( "v" );
+		const src = params.get( "src" );
 		const start = parseInt( params.get( "t" ) || "0", 10 );
 
-		let player = null;
 		let unmuted = false;
+		let doUnmute = null; // set per-mode below
 
-		const tag = document.createElement( "script" );
-		tag.src = "https://www.youtube.com/iframe_api";
-		document.head.appendChild( tag );
-
-		window.onYouTubeIframeAPIReady = function ()
+		function signalReady()
 		{
-			player = new YT.Player( "player", {
-				videoId: videoId,
-				playerVars: {
-					autoplay: 1,
-					mute: 1,
-					start: start,
-					rel: 0,
-					controls: 1,
-					playsinline: 1,
-					iv_load_policy: 3,
-				},
-				events: {
-					onReady: function ( e )
-					{
-						e.target.mute();
-						e.target.playVideo();
-					},
-					onStateChange: function ( e )
-					{
-						// Playing muted and still waiting for our gesture —
-						// tell the game we're ready for the synthetic click.
-						if ( e.data === YT.PlayerState.PLAYING && !unmuted )
-						{
-							location.hash = "ready";
-						}
+			if ( !unmuted ) location.hash = "ready";
+		}
 
-						if ( e.data === YT.PlayerState.CUED )
+		if ( src )
+		{
+			// ---------- Direct file mode ----------
+			const video = document.createElement( "video" );
+			video.id = "html5";
+			video.autoplay = true;
+			video.muted = true;
+			video.controls = true;
+			video.playsInline = true;
+			document.body.appendChild( video );
+
+			const isHls = /\.m3u8($|\?)/i.test( src );
+
+			if ( isHls && !video.canPlayType( "application/vnd.apple.mpegurl" ) )
+			{
+				// HLS streams need hls.js in Chromium-based browsers
+				const tag = document.createElement( "script" );
+				tag.src = "https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js";
+				tag.onload = function ()
+				{
+					const hls = new Hls();
+					hls.loadSource( src );
+					hls.attachMedia( video );
+				};
+				document.head.appendChild( tag );
+			}
+			else
+			{
+				video.src = src;
+			}
+
+			video.addEventListener( "loadedmetadata", function ()
+			{
+				if ( start > 0 && start < ( video.duration || Infinity ) )
+					video.currentTime = start;
+
+				video.play().catch( function () {} );
+			} );
+
+			video.addEventListener( "playing", signalReady );
+
+			doUnmute = function ()
+			{
+				video.muted = false;
+				video.volume = 1.0;
+				video.play().catch( function () {} );
+			};
+		}
+		else
+		{
+			// ---------- YouTube mode ----------
+			const holder = document.createElement( "div" );
+			holder.id = "player";
+			document.body.insertBefore( holder, document.getElementById( "unmute" ) );
+
+			let player = null;
+
+			const tag = document.createElement( "script" );
+			tag.src = "https://www.youtube.com/iframe_api";
+			document.head.appendChild( tag );
+
+			window.onYouTubeIframeAPIReady = function ()
+			{
+				player = new YT.Player( "player", {
+					videoId: videoId,
+					playerVars: {
+						autoplay: 1,
+						mute: 1,
+						start: start,
+						rel: 0,
+						controls: 1,
+						playsinline: 1,
+						iv_load_policy: 3,
+					},
+					events: {
+						onReady: function ( e )
 						{
+							e.target.mute();
 							e.target.playVideo();
+						},
+						onStateChange: function ( e )
+						{
+							if ( e.data === YT.PlayerState.PLAYING ) signalReady();
+							if ( e.data === YT.PlayerState.CUED ) e.target.playVideo();
 						}
 					}
-				}
-			} );
-		};
+				} );
+			};
+
+			doUnmute = function ()
+			{
+				if ( !player ) return;
+				player.unMute();
+				player.setVolume( 100 );
+				player.playVideo();
+			};
+		}
 
 		document.getElementById( "unmute" ).addEventListener( "pointerdown", function ()
 		{
-			if ( !player ) return;
-
-			player.unMute();
-			player.setVolume( 100 );
-			player.playVideo();
+			if ( doUnmute ) doUnmute();
 
 			unmuted = true;
 			location.hash = "sound";

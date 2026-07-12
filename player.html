@@ -1,0 +1,57 @@
+<!doctype html>
+<html>
+<head>
+	<meta charset="utf-8">
+	<title>Player</title>
+	<style>
+		html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+		#player { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+	</style>
+</head>
+<body>
+	<div id="player"></div>
+	<script>
+		// Reads ?v=VIDEOID&t=SECONDS from the URL and plays it fullscreen
+		// using the official YouTube IFrame API. Because this page has a real
+		// origin, the embedded player gets a valid referrer — no Error 153.
+		const params = new URLSearchParams( location.search );
+		const videoId = params.get( "v" );
+		const start = parseInt( params.get( "t" ) || "0", 10 );
+
+		const tag = document.createElement( "script" );
+		tag.src = "https://www.youtube.com/iframe_api";
+		document.head.appendChild( tag );
+
+		window.onYouTubeIframeAPIReady = function ()
+		{
+			new YT.Player( "player", {
+				videoId: videoId,
+				playerVars: {
+					autoplay: 1,
+					start: start,
+					rel: 0,
+					controls: 1,
+					playsinline: 1,
+					iv_load_policy: 3,
+				},
+				events: {
+					onReady: function ( e )
+					{
+						e.target.playVideo();
+					},
+					// If autoplay with sound is blocked, retry muted so at
+					// least the picture starts (in-game mute handles audio).
+					onError: function () {},
+					onStateChange: function ( e )
+					{
+						if ( e.data === YT.PlayerState.CUED )
+						{
+							e.target.playVideo();
+						}
+					}
+				}
+			} );
+		};
+	</script>
+</body>
+</html>

@@ -6,17 +6,30 @@
 	<style>
 		html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
 		#player { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+		#unmute {
+			position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+			z-index: 10; background: transparent; cursor: pointer;
+		}
 	</style>
 </head>
 <body>
 	<div id="player"></div>
+	<!-- Invisible overlay. The first click anywhere lands here (a "user
+	     gesture"), which lets us unmute. The game sends that click
+	     automatically once we signal #ready via the URL hash. -->
+	<div id="unmute"></div>
 	<script>
-		// Reads ?v=VIDEOID&t=SECONDS from the URL and plays it fullscreen
-		// using the official YouTube IFrame API. Because this page has a real
-		// origin, the embedded player gets a valid referrer — no Error 153.
+		// Reads ?v=VIDEOID&t=SECONDS from the URL. Autoplays MUTED (always
+		// allowed by autoplay policy), then unmutes on first click.
+		// Protocol with the game:
+		//   #ready -> page is playing muted, please send a click
+		//   #sound -> unmuted, all good
 		const params = new URLSearchParams( location.search );
 		const videoId = params.get( "v" );
 		const start = parseInt( params.get( "t" ) || "0", 10 );
+
+		let player = null;
+		let unmuted = false;
 
 		const tag = document.createElement( "script" );
 		tag.src = "https://www.youtube.com/iframe_api";
@@ -24,10 +37,11 @@
 
 		window.onYouTubeIframeAPIReady = function ()
 		{
-			new YT.Player( "player", {
+			player = new YT.Player( "player", {
 				videoId: videoId,
 				playerVars: {
 					autoplay: 1,
+					mute: 1,
 					start: start,
 					rel: 0,
 					controls: 1,
@@ -37,13 +51,18 @@
 				events: {
 					onReady: function ( e )
 					{
+						e.target.mute();
 						e.target.playVideo();
 					},
-					// If autoplay with sound is blocked, retry muted so at
-					// least the picture starts (in-game mute handles audio).
-					onError: function () {},
 					onStateChange: function ( e )
 					{
+						// Playing muted and still waiting for our gesture —
+						// tell the game we're ready for the synthetic click.
+						if ( e.data === YT.PlayerState.PLAYING && !unmuted )
+						{
+							location.hash = "ready";
+						}
+
 						if ( e.data === YT.PlayerState.CUED )
 						{
 							e.target.playVideo();
@@ -52,6 +71,21 @@
 				}
 			} );
 		};
+
+		document.getElementById( "unmute" ).addEventListener( "pointerdown", function ()
+		{
+			if ( !player ) return;
+
+			player.unMute();
+			player.setVolume( 100 );
+			player.playVideo();
+
+			unmuted = true;
+			location.hash = "sound";
+
+			// Remove the overlay so future clicks reach the player controls.
+			this.remove();
+		} );
 	</script>
 </body>
 </html>
